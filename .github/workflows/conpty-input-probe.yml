@@ -9,9 +9,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        include:
+          - { shard: m1, burners: '0', batches: '300', variants: immediate }
+          - { shard: m2, burners: '0', batches: '300', variants: immediate }
+          - { shard: m3, burners: '0', batches: '300', variants: 'immediate,immediate-da1' }
+          - { shard: m4, burners: '2', batches: '200', variants: 'immediate,immediate-da1' }
+          - { shard: s1, stress: '1' }
+          - { shard: s2, stress: '1' }
     runs-on: windows-2022
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v6
         with:
@@ -20,7 +26,25 @@ jobs:
         with:
           native-runtime: node
           persist-native-cache: 'false'
-      - name: Probe ConPTY input under load
+      - name: Probe ConPTY input mirroring the table stress
+        if: matrix.stress != '1'
         env:
           ORCA_BACKGROUND_LAUNCH: '1'
+          PROBE_MIRROR_STRESS: '1'
+          PROBE_BATCH_SIZE: '3'
+          PROBE_BURNERS: ${{ matrix.burners }}
+          PROBE_BATCHES: ${{ matrix.batches }}
+          PROBE_VARIANTS: ${{ matrix.variants }}
         run: node config/scripts/conpty-input-probe.cjs
+      - name: Run the real table stress repeatedly
+        if: matrix.stress == '1'
+        shell: bash
+        env:
+          ORCA_BACKGROUND_LAUNCH: '1'
+          ORCA_PTY_TABLE_STRESS_ROUNDS: '40'
+        run: |
+          pass=0; fail=0
+          for i in $(seq 1 12); do
+            if node config/scripts/windows-pty-table-stress.cjs > out.txt 2>&1; then pass=$((pass+1)); else fail=$((fail+1)); echo "RUN $i FAILED"; grep -a -E '"phase":"(error|readiness-timeout-state)"' out.txt | cut -c1-6000; fi
+          done
+          echo "STRESS_SUMMARY pass=$pass fail=$fail"

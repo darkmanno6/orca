@@ -12,6 +12,9 @@ const BATCHES = Number(process.env.PROBE_BATCHES || 30)
 const BATCH_SIZE = Number(process.env.PROBE_BATCH_SIZE || 8)
 const FIRST_TIMEOUT_MS = 15_000
 const SECOND_TIMEOUT_MS = 30_000
+const MIRROR_STRESS = process.env.PROBE_MIRROR_STRESS === '1'
+let survivor = null
+let native = null
 
 function log(obj) {
   process.stdout.write(`${JSON.stringify(obj)}\n`)
@@ -19,7 +22,7 @@ function log(obj) {
 
 const burners = []
 function startLoad() {
-  const n = Number(process.env.PROBE_BURNERS || os.cpus().length)
+  const n = Number(process.env.PROBE_BURNERS ?? os.cpus().length)
   for (let i = 0; i < n; i += 1) {
     burners.push(
       spawnChild(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore', windowsHide: true })
@@ -92,6 +95,8 @@ function spawnPane(variant) {
       rec.firstChunk = JSON.stringify(chunk.slice(0, 40))
     }
     rec.output = (rec.output + chunk).slice(-4096)
+    rec.da1Count = (rec.da1Count ?? 0) + chunk.split(PRELUDE_DA1).length - 1
+    if (rec.killedAt !== undefined) rec.bytesAfterKill = (rec.bytesAfterKill ?? 0) + chunk.length
     if (rec.da1SeenMs === null && rec.output.includes(PRELUDE_DA1)) {
       rec.da1SeenMs = now
       if (variant === 'immediate-da1' || variant === 'after-prelude') {
@@ -134,6 +139,13 @@ const withTimeout = (p, ms) =>
   Promise.race([p, new Promise((r) => setTimeout(() => r('timeout'), ms))])
 
 async function main() {
+  if (MIRROR_STRESS) {
+    const nativePath = require.resolve('node-pty/lib/utils')
+    native = require(nativePath).loadNativeModule('conpty').module
+    log({ phase: 'host-job', assigned: native.assignCurrentProcessToJob() })
+    survivor = spawnPane('immediate')
+    await survivor.first
+  }
   log({ phase: 'start', cpus: os.cpus().length, burners: startLoad(), variants: VARIANTS, node: process.version })
   const all = []
   let previous = []
@@ -141,8 +153,16 @@ async function main() {
     const batch = []
     for (let i = 0; i < BATCH_SIZE; i += 1) {
       // Overlap teardown of the last batch with this batch's startup, like the stress test.
-      previous[i]?.proc.kill()
+      if (previous[i]) {
+        previous[i].killedAt = performance.now()
+        previous[i].proc.kill()
+      }
       batch.push(spawnPane(VARIANTS[(b * BATCH_SIZE + i) % VARIANTS.length]))
+      if (survivor) {
+        survivor.proc.resize(80 + (b % 2), 24)
+        survivor.proc.clear()
+        native.listJobProcessIds(survivor.proc._pty, survivor.proc.pid)
+      }
     }
     await Promise.all(
       batch.map(async (rec) => {
@@ -165,6 +185,12 @@ async function main() {
         all.push(rec)
       })
     )
+    // Report any killed pane that kept receiving bytes, or saw more than one prelude.
+    for (const rec of previous) {
+      if (rec.bytesAfterKill || rec.da1Count > 1) {
+        log({ phase: 'crosstalk', id: rec.id, bytesAfterKill: rec.bytesAfterKill, da1Count: rec.da1Count, tail: JSON.stringify(rec.output.slice(-300)) })
+      }
+    }
     previous = batch
   }
   for (const rec of previous) rec.proc.kill()
