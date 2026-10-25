@@ -175,7 +175,24 @@ describeOnWindows("Git Bash launcher shell proof with Orca's real launch", () =>
       await vi.waitFor(() => expect(output).toContain('$'), { timeout: 20_000 })
       // ssh-agent forks, setsids off the console, and its Win32 parent exits.
       proc.write('eval "$(ssh-agent -s)"; echo ORCA_AGENT_$SSH_AGENT_PID\r')
-      await vi.waitFor(() => expect(output).toMatch(/ORCA_AGENT_\d+/), { timeout: 10_000 })
+      try {
+        await vi.waitFor(() => expect(output).toMatch(/ORCA_AGENT_\d+/), { timeout: 10_000 })
+      } catch (error) {
+        // PROBE: delay vs loss.
+        const t0 = Date.now()
+        proc.write('echo ORCA_SECOND_$((40+2))\r')
+        await new Promise((done) => setTimeout(done, 30_000))
+        console.log(
+          'PROBE_GIT_BASH_LATE',
+          JSON.stringify({
+            firstLate: /ORCA_AGENT_\d+/.test(output),
+            secondSeen: output.includes('ORCA_SECOND_42'),
+            waitedMs: Date.now() - t0,
+            output
+          })
+        )
+        throw error
+      }
       agentPid = Number(/ORCA_AGENT_(\d+)/.exec(output)?.[1])
       await vi.waitFor(async () => expect(await inspect(true)).toBe('no-children'), {
         timeout: 10_000
@@ -196,5 +213,5 @@ describeOnWindows("Git Bash launcher shell proof with Orca's real launch", () =>
       }
       proc.kill()
     }
-  }, 60_000)
+  }, 120_000)
 })

@@ -108,7 +108,7 @@ describeOnWindows('ConPTY job ownership', () => {
       program: process.execPath,
       args: [join(process.cwd(), 'config', 'scripts', 'windows-pty-table-stress.cjs')],
       env: { ...process.env, ORCA_BACKGROUND_LAUNCH: '1' },
-      timeoutMs: 90_000
+      timeoutMs: 180_000
     })
     const status = result.code === null ? 'null' : `0x${(result.code >>> 0).toString(16)}`
     if (result.code === 0 && !result.timedOut) {
@@ -119,7 +119,7 @@ describeOnWindows('ConPTY job ownership', () => {
       `Native host exited ${status} (${result.signal}); timedOut=${result.timedOut}\n${result.stdout}\n${result.stderr}`
     ).toMatchObject({ code: 0, timedOut: false })
     expect(result.stdout).toContain('"phase":"complete"')
-  }, 100_000)
+  }, 200_000)
 
   it('counts a detached grandchild as part of the pane tree', async () => {
     const { proc, grandchildPid } = await spawnShellWithDetachedGrandchild()

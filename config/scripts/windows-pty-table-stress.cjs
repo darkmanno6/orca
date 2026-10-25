@@ -13,7 +13,7 @@ async function exerciseTable() {
   assert.equal(process.platform, 'win32', 'This probe requires real Windows ConPTY')
   const rounds = Number(process.env.ORCA_PTY_TABLE_STRESS_ROUNDS ?? 8)
   assert.ok(Number.isInteger(rounds) && rounds > 0 && rounds <= 2000)
-  const { createStressObserver, loadedStressInputHashes, sanitizeStressText } =
+  var { createStressObserver, loadedStressInputHashes, sanitizeStressText } =
     await import('./windows-pty-table-stress-observer.mjs')
   const observer = createStressObserver(report)
   const pty = require('node-pty')
@@ -44,6 +44,7 @@ async function exerciseTable() {
     })
     const record = { proc, output: '', exited: false, closed: false }
     const marker = `ORCA_PTY_READY_${spawned.length}`
+    record.marker = marker
     let resolveReady
     record.ready = new Promise((resolve) => {
       resolveReady = resolve
@@ -78,8 +79,25 @@ async function exerciseTable() {
           })
         ),
         new Promise((_, reject) => {
-          timer = setTimeout(() => {
+          timer = setTimeout(async () => {
             observer.pending('readiness-timeout-state')
+            // PROBE: delay vs loss. Keep waiting for the first marker and type a second one.
+            const unready = records.filter((r) => !r.output.includes(r.marker))
+            const t0 = Date.now()
+            for (const r of unready) {
+              r.proc.write(`echo ${r.marker.replace('READY', 'SEC^OND')}\r`)
+            }
+            await new Promise((done) => setTimeout(done, 45_000))
+            report('probe-late', {
+              results: unready.map((r) => ({
+                pid: r.proc.pid,
+                firstLate: r.output.includes(r.marker),
+                secondSeen: r.output.includes(r.marker.replace('READY', 'SECOND')),
+                exited: r.exited,
+                waitedMs: Date.now() - t0,
+                tail: sanitizeStressText(r.output.slice(-600))
+              }))
+            })
             const transcripts = records.map(({ proc, output }) => ({
               pid: proc.pid,
               output: sanitizeStressText(output)
@@ -160,6 +178,10 @@ async function exerciseTable() {
   if (failure) {
     throw failure.error
   }
+  report('probe-prelude', {
+    panes: spawned.length,
+    noPrelude: spawned.filter((r) => !r.output.includes('\x1b[c')).map((r) => sanitizeStressText(r.output.slice(0, 200)))
+  })
   observer.pending('complete-state')
   report('complete', { terminals: spawned.length })
 }

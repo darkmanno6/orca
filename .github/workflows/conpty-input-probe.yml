@@ -5,46 +5,99 @@ on:
 permissions:
   contents: read
 jobs:
-  probe:
+  boundary:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { shard: m1, burners: '0', batches: '300', variants: immediate }
-          - { shard: m2, burners: '0', batches: '300', variants: immediate }
-          - { shard: m3, burners: '0', batches: '300', variants: 'immediate,immediate-da1' }
-          - { shard: m4, burners: '2', batches: '200', variants: 'immediate,immediate-da1' }
-          - { shard: s1, stress: '1' }
-          - { shard: s2, stress: '1' }
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: windows-2022
-    timeout-minutes: 50
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          # Release builds seed this exact path set; PR-local copies cannot serve other PRs.
+          key: electron-builder-win-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-builder-win-
+
+      # Why persist-native-cache false: this job later rebuilds the same path for
+      # Electron. A post-job save would store the Electron ABI under the Node key.
       - uses: ./.github/actions/install-node-dependencies
+        id: deps
         with:
           native-runtime: node
           persist-native-cache: 'false'
-      - name: Probe ConPTY input mirroring the table stress
-        if: matrix.stress != '1'
-        env:
-          ORCA_BACKGROUND_LAUNCH: '1'
-          PROBE_MIRROR_STRESS: '1'
-          PROBE_BATCH_SIZE: '3'
-          PROBE_BURNERS: ${{ matrix.burners }}
-          PROBE_BATCHES: ${{ matrix.batches }}
-          PROBE_VARIANTS: ${{ matrix.variants }}
-        run: node config/scripts/conpty-input-probe.cjs
-      - name: Run the real table stress repeatedly
-        if: matrix.stress == '1'
-        shell: bash
-        env:
-          ORCA_BACKGROUND_LAUNCH: '1'
-          ORCA_PTY_TABLE_STRESS_ROUNDS: '40'
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      # Why here: electron-builder's beforePack requires out/mobile-web, and the bundle
+      # build resolves React Native and Expo from mobile/node_modules.
+      - uses: ./.github/actions/install-mobile-dependencies
+
+      - name: Save compiled Node native modules
+        if: steps.deps.outputs.native-cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ steps.deps.outputs.native-cache-path }}
+          key: ${{ steps.deps.outputs.native-cache-key }}
+
+      - name: Cache Windows CLI launcher
+        uses: actions/cache@v5
+        with:
+          # Why the cargo directories ride along: a hit on .build skips the build
+          # entirely, but a miss otherwise recompiles the resource crate from a
+          # cold registry.
+          path: |
+            native/windows-cli-launcher/.build
+            native/windows-cli-launcher/target
+            native/windows-agent-hook/.build
+            native/windows-agent-hook/target
+            ~/.cargo/registry
+          key: windows-cli-launcher-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/windows-cli-launcher/**', 'native/windows-agent-hook/**', 'config/scripts/build-windows-cli-launcher.mjs', 'config/scripts/build-windows-agent-hook.mjs', 'config/scripts/windows-rust-executable-build.mjs', 'resources/build/icon.ico', 'package.json') }}
+
+      # Why an explicit step rather than trusting the runner image: the packaged
+      # CLI launcher is a native Rust binary, and a host without cargo fails deep
+      # inside electron-builder's native hook instead of here.
+      - name: Ensure the Rust toolchain for the Windows CLI launcher
+        shell: pwsh
         run: |
-          pass=0; fail=0
-          for i in $(seq 1 12); do
-            if node config/scripts/windows-pty-table-stress.cjs > out.txt 2>&1; then pass=$((pass+1)); else fail=$((fail+1)); echo "RUN $i FAILED"; grep -a -E '"phase":"(error|readiness-timeout-state)"' out.txt | cut -c1-6000; fi
-          done
-          echo "STRESS_SUMMARY pass=$pass fail=$fail"
+          if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+          }
+          cargo --version
+
+      # Why before the tests: the orca-agent-hook.exe suites then share one prebuilt binary rather
+      # than each starting its own build mid-run.
+      - name: Build the Windows agent hook
+        run: node config/scripts/build-windows-agent-hook.mjs
+
+      - name: Build the Windows CLI launcher
+        run: node config/scripts/build-windows-cli-launcher.mjs
+
+
+      - name: Test Windows-specific boundaries repeatedly
+        env:
+          ORCA_BACKGROUND_LAUNCH: '1'
+          ORCA_REAL_WINDOWS_SKILL_TEST: '1'
+        run: |
+          $files = node config/scripts/pr-package-test-paths.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $fails = 0
+          foreach ($i in 1..3) {
+            Write-Output "BOUNDARY_ITERATION $i"
+            node node_modules/vitest/vitest.mjs run --config config/vitest.config.ts @files
+            if ($LASTEXITCODE -ne 0) { $fails++ ; Write-Output "BOUNDARY_ITERATION_FAILED $i" }
+          }
+          Write-Output "BOUNDARY_SUMMARY fails=$fails"
+          exit 0
