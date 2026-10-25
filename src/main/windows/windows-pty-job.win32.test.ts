@@ -107,12 +107,12 @@ describeOnWindows('ConPTY job ownership', () => {
     const result = await runProcess({
       program: process.execPath,
       args: [join(process.cwd(), 'config', 'scripts', 'windows-pty-table-stress.cjs')],
-      env: { ...process.env, ORCA_BACKGROUND_LAUNCH: '1' },
+      env: { ...process.env, ORCA_BACKGROUND_LAUNCH: '1', ORCA_PTY_TABLE_STRESS_ROUNDS: '20' },
       timeoutMs: 180_000
     })
     const status = result.code === null ? 'null' : `0x${(result.code >>> 0).toString(16)}`
     if (result.code === 0 && !result.timedOut) {
-      console.log(result.stdout)
+      console.log(result.stdout.split('\n').filter((l) => l.includes('probe-prelude')).join('\n'))
     }
     expect(
       result,

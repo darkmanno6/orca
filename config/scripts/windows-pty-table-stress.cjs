@@ -87,6 +87,40 @@ async function exerciseTable() {
             for (const r of unready) {
               r.proc.write(`echo ${r.marker.replace('READY', 'SEC^OND')}\r`)
             }
+            const consoleLists = await Promise.all(
+              unready.map(
+                (r) =>
+                  new Promise((done) => {
+                    const agent = require('node:child_process').fork(
+                      require.resolve('node-pty/lib/conpty_console_list_agent'),
+                      [String(r.proc.pid)]
+                    )
+                    const t = setTimeout(() => {
+                      agent.kill()
+                      done({ pid: r.proc.pid, list: 'timeout' })
+                    }, 10_000)
+                    agent.on('message', (m) => {
+                      clearTimeout(t)
+                      done({ pid: r.proc.pid, list: m.consoleProcessList })
+                    })
+                  })
+              )
+            )
+            let processes = ''
+            try {
+              processes = require('node:child_process').execFileSync(
+                'powershell.exe',
+                [
+                  '-NoProfile',
+                  '-Command',
+                  `Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq ${process.pid} -or $_.Name -eq 'OpenConsole.exe' } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.Name) $($_.CreationDate.ToString('HH:mm:ss.fff')) $($_.CommandLine)" }`
+                ],
+                { encoding: 'utf8', timeout: 20_000 }
+              )
+            } catch (error) {
+              processes = String(error)
+            }
+            report('probe-consoles', { consoleLists, processes })
             await new Promise((done) => setTimeout(done, 45_000))
             report('probe-late', {
               results: unready.map((r) => ({

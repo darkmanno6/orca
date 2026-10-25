@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { redactTranscript } from './pty-transcript-secret-scan.mjs'
 
-const MAX_RECORDS = 32
-const MAX_EVENTS = 256
+const MAX_RECORDS = 400
+const MAX_EVENTS = 4000
 const ESC = String.fromCharCode(27)
 const CONTROL_SEQUENCE = new RegExp(`${ESC}(?:\\[[0-?]*[ -/]*[@-~]|[@-_])`, 'g')
 

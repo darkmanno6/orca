@@ -93,11 +93,29 @@ jobs:
         run: |
           $files = node config/scripts/pr-package-test-paths.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $etl = Join-Path $env:RUNNER_TEMP 'conpty.etl'
+          logman start conpty -p '{fe1ff234-1f09-50a8-d38d-c44fab43e818}' 0xffffffffffffffff 0xff -o $etl -ets -mode Circular -max 1024 -bs 1024 -nb 64 256
+          Write-Output "LOGMAN_START $LASTEXITCODE"
           $fails = 0
           foreach ($i in 1..4) {
             Write-Output "BOUNDARY_ITERATION $i"
             node node_modules/vitest/vitest.mjs run --config config/vitest.config.ts @files
-            if ($LASTEXITCODE -ne 0) { $fails++ ; Write-Output "BOUNDARY_ITERATION_FAILED $i" }
+            if ($LASTEXITCODE -ne 0) { $fails++ ; Write-Output "BOUNDARY_ITERATION_FAILED $i"; break }
           }
           Write-Output "BOUNDARY_SUMMARY fails=$fails"
+          logman stop conpty -ets
+          if ($fails -gt 0) {
+            tracerpt $etl -o (Join-Path $env:RUNNER_TEMP 'conpty.xml') -of XML -y | Out-Null
+            Write-Output "TRACERPT $LASTEXITCODE"
+            New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'probe-artifact') | Out-Null
+            Copy-Item $etl,(Join-Path $env:RUNNER_TEMP 'conpty.xml') (Join-Path $env:RUNNER_TEMP 'probe-artifact') -ErrorAction SilentlyContinue
+          }
           exit 0
+      - name: Upload ETW trace on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conpty-etw-${{ matrix.shard }}
+          path: ${{ runner.temp }}/probe-artifact
+          if-no-files-found: ignore
+          retention-days: 3
