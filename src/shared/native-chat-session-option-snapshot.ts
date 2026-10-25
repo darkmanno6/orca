@@ -216,6 +216,27 @@ export type NativeChatShownModel = {
   tracked: TrackedNativeChatSessionOption | undefined
 }
 
+/** Why: two providers can serve the same model name, so a shared label cannot say
+ *  which endpoint the next message uses. */
+function sharedModelLabels(models: readonly CatalogModel[]): Set<string> {
+  const seen = new Set<string>()
+  const shared = new Set<string>()
+  for (const model of models) {
+    if (seen.has(model.label)) {
+      shared.add(model.label)
+    } else {
+      seen.add(model.label)
+    }
+  }
+  return shared
+}
+
+/** The id's provider segment, or the whole id when the agent does not qualify ids. */
+function providerQualifiedModelLabel(id: string, label: string): string {
+  const separator = id.indexOf('/')
+  return `${label} (${separator > 0 ? id.slice(0, separator) : id})`
+}
+
 /** The model descriptor, then the controls that apply, each showing the chat's value for it.
  *  Values and controls arrive apart, so a caller decides which model's controls apply. */
 export function nativeChatSessionOptionDescriptors(args: {
@@ -233,9 +254,10 @@ export function nativeChatSessionOptionDescriptors(args: {
   // Why: callers reconcile the tracked model into `models` (see
   // withTrackedNativeChatModel), so every listed row is a real choice and the
   // trigger never shows a value without one.
+  const sharedLabels = sharedModelLabels(models)
   const modelChoices = models.map(({ id, label, description }) => ({
     value: id,
-    label,
+    label: sharedLabels.has(label) ? providerQualifiedModelLabel(id, label) : label,
     ...(description ? { description } : {})
   }))
   const modelAction = actionForApply(catalog.modelApply, model.tracked, mode, liveTransport)

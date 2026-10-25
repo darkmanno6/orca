@@ -107,6 +107,34 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
     )
   })
 
+  it('qualifies a model label two providers share so the picker names one endpoint', () => {
+    // Why: a native chat row renders the label alone, so a shared label leaves the
+    // user unable to tell which provider a message will be sent to.
+    const models = [
+      { id: 'deepseek/deepseek-flash', label: 'DeepSeek V4.1 Flash', options: [] },
+      { id: 'opencode-go/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', options: [] },
+      { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna', options: [] }
+    ]
+    const snapshot = buildNativeChatSessionOptionSnapshot({
+      catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models,
+      record: claudeRecord(),
+      mode: 'live',
+      modelLabel: 'Model',
+      liveTransport: 'agent-session'
+    })
+    const model = snapshot[0]!
+    if (model.kind.type !== 'select') {
+      throw new Error('model descriptor must be a select')
+    }
+    expect(model.kind.choices.map((choice) => choice.label)).toEqual([
+      'DeepSeek V4.1 Flash (deepseek)',
+      'DeepSeek V4.1 Flash (opencode-go)',
+      'GPT-6 Luna'
+    ])
+    expect(model.kind.choices.map((choice) => choice.value)).toEqual(models.map((m) => m.id))
+  })
+
   it('is empty when the model list is empty', () => {
     expect(
       buildNativeChatSessionOptionSnapshot({
