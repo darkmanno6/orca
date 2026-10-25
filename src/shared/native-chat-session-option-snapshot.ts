@@ -217,22 +217,8 @@ export type NativeChatShownModel = {
 }
 
 /** Why: two providers can serve the same model name, so a shared label cannot say
- *  which endpoint the next message uses. Ids are unique, so the id fills in when the
- *  provider segment alone does not separate them. */
-function modelChoiceLabels(models: readonly CatalogModel[]): Map<string, string> {
-  const shared = repeatedLabels(models.map((model) => model.label))
-  const qualified = models
-    .filter((model) => shared.has(model.label))
-    .map((model) => ({ id: model.id, label: providerQualifiedModelLabel(model.id, model.label) }))
-  const sharedQualified = repeatedLabels(qualified.map((entry) => entry.label))
-  return new Map(
-    qualified.map((entry) => [
-      entry.id,
-      sharedQualified.has(entry.label) ? `${entry.label} (${entry.id})` : entry.label
-    ])
-  )
-}
-
+ *  which endpoint the next message uses. The id is unique and names the provider
+ *  first, so it survives the pill's truncation where a trailing suffix would not. */
 function repeatedLabels(labels: readonly string[]): Set<string> {
   const seen = new Set<string>()
   const repeated = new Set<string>()
@@ -244,12 +230,6 @@ function repeatedLabels(labels: readonly string[]): Set<string> {
     }
   }
   return repeated
-}
-
-/** The id's provider segment, or the whole id when the agent does not qualify ids. */
-function providerQualifiedModelLabel(id: string, label: string): string {
-  const separator = id.indexOf('/')
-  return `${label} (${separator > 0 ? id.slice(0, separator) : id})`
 }
 
 /** The model descriptor, then the controls that apply, each showing the chat's value for it.
@@ -269,10 +249,10 @@ export function nativeChatSessionOptionDescriptors(args: {
   // Why: callers reconcile the tracked model into `models` (see
   // withTrackedNativeChatModel), so every listed row is a real choice and the
   // trigger never shows a value without one.
-  const choiceLabels = modelChoiceLabels(models)
+  const sharedLabels = repeatedLabels(models.map((model) => model.label))
   const modelChoices = models.map(({ id, label, description }) => ({
     value: id,
-    label: choiceLabels.get(id) ?? label,
+    label: sharedLabels.has(label) ? id : label,
     ...(description ? { description } : {})
   }))
   const modelAction = actionForApply(catalog.modelApply, model.tracked, mode, liveTransport)

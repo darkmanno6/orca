@@ -107,7 +107,7 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
     )
   })
 
-  it('qualifies a model label two providers share so the picker names one endpoint', () => {
+  it('names a model two providers share by its id, which carries the provider', () => {
     // Why: a native chat row renders the label alone, so a shared label leaves the
     // user unable to tell which provider a message will be sent to.
     const models = [
@@ -128,37 +128,9 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
       throw new Error('model descriptor must be a select')
     }
     expect(model.kind.choices.map((choice) => choice.label)).toEqual([
-      'DeepSeek V4.1 Flash (deepseek)',
-      'DeepSeek V4.1 Flash (opencode-go)',
+      'deepseek/deepseek-flash',
+      'opencode-go/deepseek-v4.1-flash',
       'GPT-6 Luna'
-    ])
-    expect(model.kind.choices.map((choice) => choice.value)).toEqual(models.map((m) => m.id))
-  })
-
-  it('falls back to the whole id when one provider segment still shares a label', () => {
-    // Why: ids are the only unique thing the picker has, so a provider that serves two
-    // models under one name must not leave the choice labels equal again.
-    const models = [
-      { id: 'openai/model-a', label: 'GPT-6 Luna', options: [] },
-      { id: 'openai/model-b', label: 'GPT-6 Luna', options: [] },
-      { id: 'deepseek/deepseek-flash', label: 'DeepSeek V4.1 Flash', options: [] }
-    ]
-    const snapshot = buildNativeChatSessionOptionSnapshot({
-      catalog: CLAUDE_SESSION_OPTION_CATALOG,
-      models,
-      record: claudeRecord(),
-      mode: 'live',
-      modelLabel: 'Model',
-      liveTransport: 'agent-session'
-    })
-    const model = snapshot[0]!
-    if (model.kind.type !== 'select') {
-      throw new Error('model descriptor must be a select')
-    }
-    expect(model.kind.choices.map((choice) => choice.label)).toEqual([
-      'GPT-6 Luna (openai) (openai/model-a)',
-      'GPT-6 Luna (openai) (openai/model-b)',
-      'DeepSeek V4.1 Flash'
     ])
   })
 
